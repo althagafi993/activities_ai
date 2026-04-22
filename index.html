@@ -778,64 +778,29 @@
       });
     }
 
-    function openObjectUrlInNewTab(objectUrl, previewWindow) {
-      if (previewWindow && !previewWindow.closed) {
-        previewWindow.location.replace(objectUrl);
-        return true;
-      }
-      try {
-        const link = document.createElement('a');
-        link.href = objectUrl;
-        link.target = '_blank';
-        link.rel = 'noopener';
-        document.body.appendChild(link);
-        link.click();
-        link.remove();
-        return true;
-      } catch (error) {
-        console.warn('openObjectUrlInNewTab fallback', error);
-        return false;
-      }
-    }
-
     async function presentPdfBlob(blob, fileName, previewWindow) {
       const iOS = isIOSDevice();
-      const objectUrl = URL.createObjectURL(blob);
       if (iOS) {
+        const dataUrl = await blobToDataUrl(blob);
         if (navigator.share && navigator.canShare) {
           try {
             const file = new File([blob], fileName, { type: 'application/pdf' });
             if (navigator.canShare({ files: [file] })) {
               await navigator.share({ files: [file], title: fileName });
-              setTimeout(() => URL.revokeObjectURL(objectUrl), 60000);
-              return objectUrl;
+              return '';
             }
           } catch (shareError) {
             console.warn('iOS share fallback', shareError);
           }
         }
-
-        const opened = openObjectUrlInNewTab(objectUrl, previewWindow);
-        if (!opened) {
-          try {
-            const dataUrl = await blobToDataUrl(blob);
-            if (previewWindow && !previewWindow.closed) {
-              previewWindow.location.replace(dataUrl);
-            } else {
-              window.location.href = dataUrl;
-            }
-          } catch (error) {
-            window.location.href = objectUrl;
-          }
+        if (previewWindow && !previewWindow.closed) {
+          previewWindow.location.replace(dataUrl);
+        } else {
+          window.location.href = dataUrl;
         }
-        setTimeout(() => URL.revokeObjectURL(objectUrl), 60000);
-        return objectUrl;
+        return '';
       }
-      const downloadedUrl = downloadBlob(blob, fileName);
-      if (downloadedUrl && downloadedUrl !== objectUrl) {
-        setTimeout(() => URL.revokeObjectURL(objectUrl), 60000);
-      }
-      return downloadedUrl;
+      return downloadBlob(blob, fileName);
     }
 
     async function waitForLoadedImage(img) {
@@ -1035,12 +1000,12 @@
       const screenshotImg = byId('printScreenshotImage');
       if (screenshotImg && screenshotImg.src) {
         await waitForLoadedImage(screenshotImg);
-        const slot = screenshotImg.closest('.screenshot-slot');
+        const slot = byId('screenshotSlot') || screenshotImg.closest('.screenshot-slot');
         if (slot) {
           const rect = getRelativeRect(slot, paperRect, scaleX, scaleY);
           const sourceWidth = screenshotImg.naturalWidth || screenshotImg.width;
           const sourceHeight = screenshotImg.naturalHeight || screenshotImg.height;
-          if (sourceWidth > 0 && sourceHeight > 0) {
+          if (rect.w > 0 && rect.h > 0 && sourceWidth > 0 && sourceHeight > 0) {
             const ratio = Math.min(rect.w / sourceWidth, rect.h / sourceHeight);
             const drawWidth = sourceWidth * ratio;
             const drawHeight = sourceHeight * ratio;
@@ -1205,7 +1170,13 @@
       const templateImg = byId('paper').querySelector('.template-img');
       await waitForLoadedImage(templateImg);
       if (state.imageData) {
+        const screenImg = byId('screenshotImage');
         const img = byId('printScreenshotImage');
+        if (screenImg) {
+          screenImg.src = state.imageData;
+          screenImg.style.display = 'block';
+          await waitForLoadedImage(screenImg);
+        }
         img.src = state.imageData;
         img.style.display = 'block';
         await waitForLoadedImage(img);
@@ -1214,14 +1185,12 @@
 
     async function printDocument() {
       if (isIOSDevice()) {
-        setStatus('في iPhone وiPad سيتم إنشاء PDF ثم فتحه للمشاركة أو الطباعة من عارض النظام.');
         await exportPdf(true);
         return;
       }
       try {
         setStatus('جاري تجهيز صفحة الطباعة...');
         await preparePrintView();
-        await new Promise((resolve) => setTimeout(resolve, 120));
         window.print();
         setStatus('تم تجهيز صفحة الطباعة.');
       } catch (error) {
@@ -1238,10 +1207,6 @@
       let previewWindow = null;
       if (isIOS) {
         previewWindow = window.open('', '_blank');
-        if (previewWindow && previewWindow.document) {
-          previewWindow.document.write('<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>جاري تجهيز ملف PDF...</title><style>body{font-family:Tahoma,Arial,sans-serif;margin:0;padding:24px;text-align:center;color:#0f172a} .note{color:#475569;font-size:14px;line-height:1.8}</style></head><body><h2>جاري تجهيز ملف PDF...</h2><div class="note">سيُفتح الملف بعد اكتمال الإنشاء حتى تتمكن من الطباعة أو المشاركة في iPhone وiPad.</div></body></html>');
-          previewWindow.document.close();
-        }
       }
       document.title = buildFileName();
       setStatus(fromPrintFallback ? 'جارٍ إنشاء ملف PDF بدلاً من صفحة الطباعة...' : 'جارٍ إنشاء ملف PDF مع الحفاظ على الروابط...');
