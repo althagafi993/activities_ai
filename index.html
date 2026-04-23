@@ -13,6 +13,10 @@
       --muted: #6b7280;
     }
     * { box-sizing: border-box; }
+    html {
+      -webkit-text-size-adjust: 100%;
+      text-size-adjust: 100%;
+    }
     html, body {
       margin: 0;
       padding: 0;
@@ -66,8 +70,11 @@
     .overlay { position: absolute; inset: 0; }
     .slot { position: absolute; }
     .edit-input, .edit-area, .print-field {
-      width: 100%; height: 100%; border: 0; outline: none; background: transparent; color: var(--ink);
+      width: 100%; height: 100%; min-height: 100%; max-height: 100%; border: 0; outline: none; background: transparent; color: var(--ink);
       font-family: Tahoma, Arial, sans-serif; text-align: right; box-sizing: border-box; line-height: 1.35;
+      -webkit-text-size-adjust: 100%; text-size-adjust: 100%;
+      appearance: none; -webkit-appearance: none; border-radius: 0;
+      vertical-align: top;
     }
     .edit-input, .edit-area { display: block; }
     .edit-input {
@@ -94,6 +101,8 @@
       min-height: calc(1.08em * 4 + 8px);
       scrollbar-width: none;
       -ms-overflow-style: none;
+      field-sizing: fixed;
+      transform: translateZ(0);
     }
     .edit-area::-webkit-scrollbar { display: none; }
     .slot.medium .edit-area { padding: 3px 5px 2px; }
@@ -108,6 +117,7 @@
       overflow-wrap: anywhere;
       overflow: hidden;
       min-height: calc(1.08em * 4 + 8px);
+      transform: translateZ(0);
     }
     .slot.big .print-field { padding: 4px 6px; font-size: clamp(9.6px, 0.92vw, 13.4px); line-height: 1.06; }
     #email, #print-email { padding: 3px 5px; }
@@ -164,6 +174,8 @@
     .mobile-input, .mobile-textarea {
       width: 100%; border: 1px solid #cbd5e1; border-radius: 10px; padding: 11px 12px; font-family: Tahoma, Arial, sans-serif;
       font-size: 15px; color: var(--ink); background: #fff; outline: none;
+      -webkit-text-size-adjust: 100%; text-size-adjust: 100%;
+      appearance: none; -webkit-appearance: none;
     }
     .mobile-input:focus, .mobile-textarea:focus { border-color: rgba(15, 95, 143, 0.45); box-shadow: 0 0 0 3px rgba(15, 95, 143, 0.10); }
     .mobile-textarea { min-height: calc(1.6em * 4 + 26px); resize: vertical; line-height: 1.6; }
@@ -203,6 +215,18 @@
       overflow-wrap: anywhere;
       word-break: break-word;
       user-select: text;
+    }
+
+
+    .is-ios-safari .edit-area,
+    .is-ios-safari .print-field {
+      font-size: 11px;
+      line-height: 1.15;
+    }
+
+    .is-ios-safari .edit-input {
+      font-size: 12px;
+      line-height: 1.12;
     }
 
 
@@ -414,6 +438,31 @@
 
     function byId(id) { return document.getElementById(id); }
     function setStatus(message) { byId('statusBar').textContent = message; }
+    function isIOSDevice() {
+      const ua = window.navigator.userAgent || '';
+      const platform = window.navigator.platform || '';
+      const maxTouchPoints = window.navigator.maxTouchPoints || 0;
+      return /iPad|iPhone|iPod/i.test(ua) || (/Mac/.test(platform) && maxTouchPoints > 1);
+    }
+    function isSafariBrowser() {
+      const ua = window.navigator.userAgent || '';
+      return /Safari/i.test(ua) && !/Chrome|CriOS|Edg|OPR|FxiOS|Firefox|SamsungBrowser|YaBrowser/i.test(ua);
+    }
+    function getComfortableTextMetrics(element, baseFont, baseLine, targetLines, minFont, minLine) {
+      const height = Math.max(1, element?.clientHeight || element?.offsetHeight || 0);
+      const width = Math.max(1, element?.clientWidth || element?.offsetWidth || 0);
+      const isSafariLike = isSafariBrowser();
+      const isIOSSafari = isIOSDevice() && isSafariLike;
+      const verticalAllowance = isIOSSafari ? 10 : isSafariLike ? 8 : 6;
+      const safeHeight = Math.max(minLine * targetLines, height - verticalAllowance);
+      const comfortLine = Math.max(minLine, Math.min(baseLine, safeHeight / Math.max(4, targetLines)));
+      const comfortFont = Math.max(minFont, Math.min(baseFont, comfortLine / (isIOSSafari ? 1.16 : 1.12)));
+      const widthLimit = width < 120 ? 0.96 : 1;
+      return {
+        font: Math.max(minFont, Math.min(baseFont, comfortFont * widthLimit)),
+        line: comfortLine
+      };
+    }
 
     function autoFitSingleLineField(field) {
       if (!field || !field.classList.contains('edit-input')) return;
@@ -464,14 +513,15 @@
         field.style.fontSize = font + 'px';
         field.style.lineHeight = line + 'px';
       };
+      const comfort = getComfortableTextMetrics(field, baseFont, baseLine, targetLines, minFont, minLine);
       let low = minFont;
-      let high = baseFont;
+      let high = Math.max(minFont, Math.min(baseFont, comfort.font));
       let bestFont = minFont;
-      let bestLine = minLine;
+      let bestLine = Math.max(minLine, comfort.line);
       while (high - low > 0.08) {
         const mid = (low + high) / 2;
         const ratio = baseFont > 0 ? (mid / baseFont) : 1;
-        const line = Math.max(minLine, Math.min(baseLine, baseLine * (0.985 + ratio * 0.015)));
+        const line = Math.max(minLine, Math.min(comfort.line, baseLine * (0.985 + ratio * 0.015)));
         apply(mid, line);
         const lineCount = getLineCount();
         const ok = fits() && lineCount <= maxLines;
@@ -485,20 +535,20 @@
       }
       apply(bestFont, bestLine);
       let lineCount = getLineCount();
-      const hasMeaningfulText = (field.value || '').trim().length > 12;
+      const hasMeaningfulText = (field.value || '').trim().length > 0;
       if (hasMeaningfulText && lineCount < targetLines && bestFont > minFont + 0.05) {
         let denserFont = bestFont;
         let denserLine = bestLine;
         while (denserFont > minFont + 0.01 && lineCount < targetLines) {
           denserFont = Math.max(minFont, denserFont - shrinkStep);
           const ratio = baseFont > 0 ? (denserFont / baseFont) : 1;
-          denserLine = Math.max(minLine, Math.min(baseLine, baseLine * (0.98 + ratio * 0.02)));
+          denserLine = Math.max(minLine, Math.min(comfort.line, baseLine * (0.98 + ratio * 0.02)));
           apply(denserFont, denserLine);
           lineCount = getLineCount();
           if (!fits() || lineCount > maxLines) {
             denserFont = Math.min(baseFont, denserFont + shrinkStep);
             const backRatio = baseFont > 0 ? (denserFont / baseFont) : 1;
-            denserLine = Math.max(minLine, Math.min(baseLine, baseLine * (0.98 + backRatio * 0.02)));
+            denserLine = Math.max(minLine, Math.min(comfort.line, baseLine * (0.98 + backRatio * 0.02)));
             apply(denserFont, denserLine);
             break;
           }
@@ -556,14 +606,15 @@
         target.style.fontSize = font + 'px';
         target.style.lineHeight = line + 'px';
       };
+      const comfort = getComfortableTextMetrics(target, baseFont, baseLine, targetLines, minFont, minLine);
       let low = minFont;
-      let high = baseFont;
+      let high = Math.max(minFont, Math.min(baseFont, comfort.font));
       let bestFont = minFont;
-      let bestLine = minLine;
+      let bestLine = Math.max(minLine, comfort.line);
       while (high - low > 0.08) {
         const mid = (low + high) / 2;
         const ratio = baseFont > 0 ? (mid / baseFont) : 1;
-        const line = Math.max(minLine, Math.min(baseLine, baseLine * (0.985 + ratio * 0.015)));
+        const line = Math.max(minLine, Math.min(comfort.line, baseLine * (0.985 + ratio * 0.015)));
         apply(mid, line);
         const lineCount = getLineCount();
         if (fits() && lineCount <= maxLines) {
@@ -577,19 +628,19 @@
       apply(bestFont, bestLine);
       let lineCount = getLineCount();
       const contentText = (source?.value || target.textContent || '').trim();
-      if (contentText.length > 12 && lineCount < targetLines && bestFont > minFont + 0.05) {
+      if (contentText.length > 0 && lineCount < targetLines && bestFont > minFont + 0.05) {
         let denserFont = bestFont;
         let denserLine = bestLine;
         while (denserFont > minFont + 0.01 && lineCount < targetLines) {
           denserFont = Math.max(minFont, denserFont - shrinkStep);
           const ratio = baseFont > 0 ? (denserFont / baseFont) : 1;
-          denserLine = Math.max(minLine, Math.min(baseLine, baseLine * (0.98 + ratio * 0.02)));
+          denserLine = Math.max(minLine, Math.min(comfort.line, baseLine * (0.98 + ratio * 0.02)));
           apply(denserFont, denserLine);
           lineCount = getLineCount();
           if (!fits() || lineCount > maxLines) {
             denserFont = Math.min(baseFont, denserFont + shrinkStep);
             const backRatio = baseFont > 0 ? (denserFont / baseFont) : 1;
-            denserLine = Math.max(minLine, Math.min(baseLine, baseLine * (0.98 + backRatio * 0.02)));
+            denserLine = Math.max(minLine, Math.min(comfort.line, baseLine * (0.98 + backRatio * 0.02)));
             apply(denserFont, denserLine);
             break;
           }
@@ -599,6 +650,7 @@
       }
       apply(bestFont, bestLine);
       target.style.minHeight = Math.max(bestLine * 4, 0) + 'px';
+      field.style.minHeight = Math.max(bestLine * 4, 0) + 'px';
     }
 
     function fitPrintField(source, target) {
@@ -797,10 +849,6 @@
       const participantName = (byId('participantName').value || 'نموذج-رواد-الابتكار').trim();
       const safeName = (participantName + '-رواد-الابتكار').replace(/[\/:*?"<>|]/g, '-');
       return safeName || 'نموذج-رواد-الابتكار';
-    }
-
-    function isIOSDevice() {
-      return /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
     }
 
     function downloadBlob(blob, fileName) {
@@ -1277,7 +1325,12 @@
         setStatus('جاري تجهيز صفحة الطباعة لجميع الأنظمة...');
         await preparePrintView();
         beginPrintMode();
-        await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+        await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+        if (isIOSDevice()) {
+          setStatus('على iPhone وiPad سيتم فتح نسخة PDF جاهزة للطباعة لرفع الاعتمادية في Safari وتطبيقات العرض.');
+          await openPrintFallbackPdf();
+          return;
+        }
         if (typeof window.print === 'function') {
           window.focus();
           window.print();
@@ -1291,7 +1344,7 @@
                 console.error(fallbackError);
               }
             }
-          }, 1200);
+          }, isSafariBrowser() ? 1600 : 1200);
         } else {
           throw new Error('window.print unavailable');
         }
@@ -1300,7 +1353,7 @@
         setStatus('تعذرت الطباعة المباشرة؛ سيتم فتح نسخة PDF بديلة للطباعة.');
         await openPrintFallbackPdf();
       } finally {
-        setTimeout(endPrintMode, 1500);
+        setTimeout(endPrintMode, isIOSDevice() ? 400 : 1500);
       }
     }
 
@@ -1410,10 +1463,21 @@
       }
     }
     window.addEventListener('DOMContentLoaded', () => {
+      if (isIOSDevice()) document.documentElement.classList.add('is-ios-device');
+      if (isSafariBrowser()) document.documentElement.classList.add('is-safari-browser');
+      if (isIOSDevice() && isSafariBrowser()) document.documentElement.classList.add('is-ios-safari');
       loadState();
       autoFitAllSingleLineFields();
       fitAllMultilineFields();
       syncMobileFieldsFromState();
+      setTimeout(() => {
+        autoFitAllSingleLineFields();
+        fitAllMultilineFields();
+      }, 80);
+      setTimeout(() => {
+        autoFitAllSingleLineFields();
+        fitAllMultilineFields();
+      }, 260);
     });
   </script>
 </body>
