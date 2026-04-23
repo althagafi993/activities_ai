@@ -873,9 +873,53 @@
       });
     }
 
+    function blobToBytes(blob) {
+      if (blob.arrayBuffer) {
+        return blob.arrayBuffer().then((buffer) => new Uint8Array(buffer));
+      }
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(new Uint8Array(reader.result));
+        reader.onerror = () => reject(new Error('تعذر تحويل ملف PDF للبيانات الثنائية.'));
+        reader.readAsArrayBuffer(blob);
+      });
+    }
+
+    function canvasToJpegBlob(canvas, quality = 0.92) {
+      return new Promise((resolve, reject) => {
+        try {
+          if (!canvas || typeof canvas.toBlob !== 'function') {
+            reject(new Error('canvas.toBlob unavailable'));
+            return;
+          }
+          canvas.toBlob((blob) => {
+            if (blob) resolve(blob);
+            else reject(new Error('تعذر إنشاء صورة JPEG من الصفحة.'));
+          }, 'image/jpeg', quality);
+        } catch (error) {
+          reject(error);
+        }
+      });
+    }
+
+    function openBlobInSameTab(objectUrl) {
+      const tempLink = document.createElement('a');
+      tempLink.href = objectUrl;
+      tempLink.target = '_blank';
+      tempLink.rel = 'noopener';
+      document.body.appendChild(tempLink);
+      tempLink.click();
+      tempLink.remove();
+    }
+
+    function isAndroidDevice() {
+      return /Android/i.test(window.navigator.userAgent || '');
+    }
+
     async function presentPdfBlob(blob, fileName, previewWindow) {
       const objectUrl = URL.createObjectURL(blob);
       const iOS = isIOSDevice();
+      const android = isAndroidDevice();
       if (iOS) {
         if (navigator.share && navigator.canShare) {
           try {
@@ -895,17 +939,49 @@
         setTimeout(() => URL.revokeObjectURL(objectUrl), 60000);
         return objectUrl;
       }
+
+      if (android && navigator.share && typeof File !== 'undefined') {
+        try {
+          const file = new File([blob], fileName, { type: 'application/pdf' });
+          await navigator.share({ files: [file], title: fileName });
+          setTimeout(() => URL.revokeObjectURL(objectUrl), 60000);
+          return objectUrl;
+        } catch (shareError) {
+          console.warn('Android share fallback', shareError);
+        }
+      }
+
       if (previewWindow && !previewWindow.closed) {
-        previewWindow.location.replace(objectUrl);
-        previewWindow.focus();
-        setTimeout(() => URL.revokeObjectURL(objectUrl), 60000);
-        return objectUrl;
+        try {
+          previewWindow.location.replace(objectUrl);
+          previewWindow.focus();
+          setTimeout(() => URL.revokeObjectURL(objectUrl), 60000);
+          return objectUrl;
+        } catch (previewError) {
+          console.warn('Preview window fallback', previewError);
+        }
       }
-      const opened = window.open(objectUrl, '_blank', 'noopener');
-      if (opened) {
-        setTimeout(() => URL.revokeObjectURL(objectUrl), 60000);
-        return objectUrl;
+
+      try {
+        const opened = window.open(objectUrl, '_blank', 'noopener');
+        if (opened) {
+          setTimeout(() => URL.revokeObjectURL(objectUrl), 60000);
+          return objectUrl;
+        }
+      } catch (openError) {
+        console.warn('window.open fallback', openError);
       }
+
+      if (android) {
+        try {
+          openBlobInSameTab(objectUrl);
+          setTimeout(() => URL.revokeObjectURL(objectUrl), 60000);
+          return objectUrl;
+        } catch (sameTabError) {
+          console.warn('Android same-tab fallback', sameTabError);
+        }
+      }
+
       const downloaded = downloadBlob(blob, fileName);
       setTimeout(() => URL.revokeObjectURL(objectUrl), 60000);
       return downloaded;
@@ -921,7 +997,7 @@
       await preparePrintView();
       const { canvas, pageWidth, pageHeight } = await renderPaperToCanvas();
       const links = collectPdfLinks(pageWidth, pageHeight);
-      const pdfBlob = buildPdfBlobFromCanvas(canvas, links);
+      const pdfBlob = await buildPdfBlobFromCanvas(canvas, links);
       await presentPdfBlob(pdfBlob, fileName, previewWindow);
     }
 
@@ -1216,11 +1292,18 @@
       return Number(value).toFixed(2).replace(/\.00$/, '');
     }
 
-    function buildPdfBlobFromCanvas(canvas, links) {
+    async function buildPdfBlobFromCanvas(canvas, links) {
       const pageWidthPt = 595.28;
       const pageHeightPt = 841.89;
-      const imageDataUrl = canvas.toDataURL('image/jpeg', 0.92);
-      const imageBytes = base64ToBytes(imageDataUrl.split(',')[1]);
+      let imageBytes;
+      try {
+        const imageBlob = await canvasToJpegBlob(canvas, isAndroidDevice() ? 0.88 : 0.92);
+        imageBytes = await blobToBytes(imageBlob);
+      } catch (blobError) {
+        console.warn('JPEG blob fallback', blobError);
+        const imageDataUrl = canvas.toDataURL('image/jpeg', isAndroidDevice() ? 0.88 : 0.92);
+        imageBytes = base64ToBytes(imageDataUrl.split(',')[1]);
+      }
       const contentStream = utf8Bytes(
         'q\n' +
         formatPdfNumber(pageWidthPt) + ' 0 0 ' + formatPdfNumber(pageHeightPt) + ' 0 0 cm\n' +
@@ -1361,25 +1444,30 @@
       const originalTitle = document.title;
       const fileName = buildFileName() + '.pdf';
       const isIOS = isIOSDevice();
+      const isAndroid = isAndroidDevice();
       let previewWindow = null;
-      if (isIOS) {
+      if (isIOS || isAndroid) {
         previewWindow = window.open('', '_blank');
         if (previewWindow && previewWindow.document) {
-          previewWindow.document.write('<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>جاري تجهيز ملف PDF</title><style>body{font-family:Tahoma,Arial,sans-serif;margin:0;padding:24px;text-align:center;color:#0f172a}.note{color:#475569;font-size:14px;line-height:1.8}</style></head><body><h2>جاري تجهيز ملف PDF</h2><div class="note">سيتم فتح الملف بعد اكتمال الإنشاء مع الحفاظ على الروابط قدر الإمكان على iPhone وiPad.</div></body></html>');
+          previewWindow.document.write('<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>جاري تجهيز ملف PDF</title><style>body{font-family:Tahoma,Arial,sans-serif;margin:0;padding:24px;text-align:center;color:#0f172a}.note{color:#475569;font-size:14px;line-height:1.8}</style></head><body><h2>جاري تجهيز ملف PDF</h2><div class="note">سيتم فتح الملف بعد اكتمال الإنشاء مع الحفاظ على الروابط قدر الإمكان على جميع الأنظمة، مع مسار أكثر توافقًا لأندرويد جالكسي وكروم.</div></body></html>');
           previewWindow.document.close();
         }
       }
       document.title = buildFileName();
-      setStatus(fromPrintFallback ? 'جارٍ إنشاء ملف PDF بدلاً من صفحة الطباعة...' : 'جارٍ إنشاء ملف PDF مع الحفاظ على الروابط...');
+      setStatus(fromPrintFallback
+        ? 'جارٍ إنشاء ملف PDF بدلاً من صفحة الطباعة...'
+        : (isAndroid ? 'جارٍ إنشاء ملف PDF بصيغة أكثر توافقًا مع جالكسي وكروم...' : 'جارٍ إنشاء ملف PDF مع الحفاظ على الروابط...'));
       try {
         await preparePrintView();
         const { canvas, pageWidth, pageHeight } = await renderPaperToCanvas();
         const links = collectPdfLinks(pageWidth, pageHeight);
-        const pdfBlob = buildPdfBlobFromCanvas(canvas, links);
+        const pdfBlob = await buildPdfBlobFromCanvas(canvas, links);
         await presentPdfBlob(pdfBlob, fileName, previewWindow);
         setStatus(isIOS
           ? 'تم إنشاء ملف PDF بنجاح. على iPhone وiPad سيُفتح الملف أو ورقة المشاركة مع الحفاظ على الروابط.'
-          : 'تم إنشاء ملف PDF بنجاح.');
+          : (isAndroid
+            ? 'تم إنشاء ملف PDF بنجاح. في جالكسي وكروم سيُفتح الملف أو ورقة المشاركة وفق الطريقة الأكثر توافقًا.'
+            : 'تم إنشاء ملف PDF بنجاح.'));
       } catch (error) {
         console.error(error);
         if (previewWindow && !previewWindow.closed) {
@@ -1466,6 +1554,7 @@
       if (isIOSDevice()) document.documentElement.classList.add('is-ios-device');
       if (isSafariBrowser()) document.documentElement.classList.add('is-safari-browser');
       if (isIOSDevice() && isSafariBrowser()) document.documentElement.classList.add('is-ios-safari');
+      if (isAndroidDevice()) document.documentElement.classList.add('is-android-device');
       loadState();
       autoFitAllSingleLineFields();
       fitAllMultilineFields();
