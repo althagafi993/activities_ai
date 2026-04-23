@@ -183,6 +183,9 @@
       direction: rtl;
       -webkit-user-select: text;
       user-select: text;
+      -webkit-touch-callout: default;
+      touch-action: manipulation;
+      cursor: pointer;
       pointer-events: auto;
     }
 
@@ -274,7 +277,7 @@
         <div class="screenshot-slot print-only" aria-hidden="true">
           <img id="printScreenshotImage" class="screenshot-image" alt="الصورة المرفقة للطباعة" />
         </div>
-        <input id="imageInput" type="file" accept="image/*" hidden />
+        <input id="imageInput" type="file" accept="image/*" aria-hidden="true" tabindex="-1" style="position:absolute;left:-9999px;width:1px;height:1px;opacity:0;pointer-events:none;" />
       </div>
     </div>
   </div>
@@ -576,18 +579,47 @@
       return raw;
     }
 
+    function safeOpenUrl(url) {
+      const href = normalizeUrl(url);
+      if (!href) return;
+      try {
+        const popup = window.open(href, '_blank', 'noopener,noreferrer');
+        if (popup) return;
+      } catch (error) {}
+      try {
+        const anchor = document.createElement('a');
+        anchor.href = href;
+        anchor.target = '_blank';
+        anchor.rel = 'noopener noreferrer';
+        anchor.style.position = 'fixed';
+        anchor.style.left = '-9999px';
+        document.body.appendChild(anchor);
+        anchor.click();
+        anchor.remove();
+        return;
+      } catch (error) {}
+      window.location.href = href;
+    }
+
     function renderPrintLink(target, value) {
       if (!target) return;
       const trimmed = String(value || '').trim();
       target.innerHTML = '';
       if (!trimmed) return;
       const anchor = document.createElement('a');
+      const href = normalizeUrl(trimmed);
       anchor.className = 'print-link-anchor';
-      anchor.href = normalizeUrl(trimmed);
+      anchor.href = href;
       anchor.target = '_blank';
       anchor.rel = 'noopener noreferrer';
       anchor.textContent = 'اضغط هنا';
       anchor.title = trimmed;
+      anchor.setAttribute('role', 'button');
+      anchor.setAttribute('aria-label', 'فتح الرابط');
+      anchor.addEventListener('click', (event) => {
+        event.preventDefault();
+        safeOpenUrl(href);
+      });
       target.appendChild(anchor);
     }
 
@@ -726,7 +758,21 @@
       reader.readAsDataURL(file);
     }
 
-    function openImagePicker() { byId('imageInput').click(); }
+    function openImagePicker() {
+      const input = byId('imageInput');
+      if (!input) return;
+      try {
+        input.click();
+      } catch (error) {
+        const label = document.createElement('label');
+        label.setAttribute('for', 'imageInput');
+        label.style.position = 'fixed';
+        label.style.left = '-9999px';
+        document.body.appendChild(label);
+        label.click();
+        label.remove();
+      }
+    }
     function removeImage() {
       state.imageData = '';
       state.imageName = '';
@@ -781,6 +827,7 @@
     async function presentPdfBlob(blob, fileName, previewWindow) {
       const iOS = isIOSDevice();
       if (iOS) {
+        const dataUrl = await blobToDataUrl(blob);
         if (navigator.share && navigator.canShare) {
           try {
             const file = new File([blob], fileName, { type: 'application/pdf' });
@@ -792,31 +839,12 @@
             console.warn('iOS share fallback', shareError);
           }
         }
-
-        const objectUrl = URL.createObjectURL(blob);
-        try {
-          if (previewWindow && !previewWindow.closed) {
-            previewWindow.location.replace(objectUrl);
-          } else {
-            const opened = window.open(objectUrl, '_blank');
-            if (!opened) {
-              window.location.href = objectUrl;
-            }
-          }
-          setTimeout(() => {
-            try { URL.revokeObjectURL(objectUrl); } catch (e) {}
-          }, 120000);
-          return objectUrl;
-        } catch (objectUrlError) {
-          console.warn('iOS object URL fallback', objectUrlError);
-          const dataUrl = await blobToDataUrl(blob);
-          if (previewWindow && !previewWindow.closed) {
-            previewWindow.location.replace(dataUrl);
-          } else {
-            window.location.href = dataUrl;
-          }
-          return '';
+        if (previewWindow && !previewWindow.closed) {
+          previewWindow.location.replace(dataUrl);
+        } else {
+          window.location.href = dataUrl;
         }
+        return '';
       }
       return downloadBlob(blob, fileName);
     }
@@ -1163,7 +1191,7 @@
           6 + index,
           '<< /Type /Annot /Subtype /Link /Rect [' +
             [x1, y1, x2, y2].map(formatPdfNumber).join(' ') +
-            '] /Border [0 0 0] /BS << /W 0 >> /H /I /F 4 /Contents (' + escapePdfString(link.url) + ') /A << /Type /Action /S /URI /URI (' + escapePdfString(link.url) + ') >> >>'
+            '] /Border [0 0 0] /A << /S /URI /URI (' + escapePdfString(link.url) + ') >> >>'
         );
       });
 
@@ -1290,6 +1318,18 @@
     });
 
     byId('screenshotSlot').addEventListener('click', () => { openImagePicker(); });
+    byId('screenshotSlot').addEventListener('touchend', (event) => {
+      event.preventDefault();
+      openImagePicker();
+    }, { passive: false });
+    byId('screenshotSlot').addEventListener('pointerup', () => { openImagePicker(); });
+
+    byId('screenshotSlot').addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        openImagePicker();
+      }
+    });
 
     window.addEventListener('paste', (event) => {
       const items = event.clipboardData?.items || [];
