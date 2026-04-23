@@ -161,7 +161,7 @@
       font-size: 15px; color: var(--ink); background: #fff; outline: none;
     }
     .mobile-input:focus, .mobile-textarea:focus { border-color: rgba(15, 95, 143, 0.45); box-shadow: 0 0 0 3px rgba(15, 95, 143, 0.10); }
-    .mobile-textarea { min-height: 94px; resize: vertical; line-height: 1.6; }
+    .mobile-textarea { min-height: calc(1.6em * 4 + 26px); resize: vertical; line-height: 1.6; }
     .mobile-input.ltr, .mobile-textarea.ltr { direction: ltr; text-align: left; }
     .mobile-options { display: grid; gap: 8px; }
     .mobile-option { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border: 1px solid #d9e1ec; border-radius: 10px; background: #fff; font-size: 14px; color: #0f172a; }
@@ -184,6 +184,20 @@
       -webkit-user-select: text;
       user-select: text;
       pointer-events: auto;
+    }
+
+    .print-link-url {
+      display: block;
+      margin-top: 2px;
+      font-size: 0.82em;
+      line-height: 1.25;
+      color: #334155;
+      direction: ltr;
+      text-align: left;
+      white-space: normal;
+      overflow-wrap: anywhere;
+      word-break: break-word;
+      user-select: text;
     }
 
 
@@ -260,7 +274,7 @@
           <div id="print-promptText" class="print-field"></div>
         </div>
         <div class="slot medium" style="left:16.1966%; top:44.4128%; width:39.3231%; height:3.9909%;">
-          <textarea id="promptLink" class="edit-area ltr" data-max-lines="5" data-min-comfort-lines="4" data-target-lines="4" data-target-max-lines="5" data-min-font="8.0" data-min-line-height="8.6" data-shrink-step="0.12" placeholder="https://..."></textarea>
+          <textarea id="promptLink" class="edit-area ltr" data-max-lines="5" data-min-comfort-lines="4" data-target-lines="4" data-target-max-lines="6" data-min-font="8.0" data-min-line-height="8.6" data-shrink-step="0.12" placeholder="https://..."></textarea>
           <div id="print-promptLink" class="print-field ltr"></div>
         </div>
 
@@ -325,19 +339,19 @@
       <div class="mobile-grid">
         <label class="mobile-field">
           <span class="mobile-label">وصف النشاط / الفعالية التعليمية</span>
-          <textarea class="mobile-textarea" data-bind="activityDescription" placeholder="اكتب وصف النشاط أو الفعالية التعليمية"></textarea>
+          <textarea class="mobile-textarea" data-bind="activityDescription" rows="4" placeholder="اكتب وصف النشاط أو الفعالية التعليمية"></textarea>
         </label>
         <label class="mobile-field">
           <span class="mobile-label">الحل المقترح بعد المراجعة</span>
-          <textarea class="mobile-textarea" data-bind="reviewedSolution" placeholder="اكتب الحل المقترح بعد المراجعة"></textarea>
+          <textarea class="mobile-textarea" data-bind="reviewedSolution" rows="4" placeholder="اكتب الحل المقترح بعد المراجعة"></textarea>
         </label>
         <label class="mobile-field">
           <span class="mobile-label">الأمر النصي المستخدم في Copilot</span>
-          <textarea class="mobile-textarea" data-bind="promptText" placeholder="اكتب الأمر النصي المستخدم"></textarea>
+          <textarea class="mobile-textarea" data-bind="promptText" rows="4" placeholder="اكتب الأمر النصي المستخدم"></textarea>
         </label>
         <label class="mobile-field">
           <span class="mobile-label">رابط الأمر النصي المستخدم</span>
-          <textarea class="mobile-textarea ltr" data-bind="promptLink" placeholder="https://..."></textarea>
+          <textarea class="mobile-textarea ltr" data-bind="promptLink" rows="4" placeholder="https://..."></textarea>
         </label>
       </div>
     </div>
@@ -581,14 +595,21 @@
       const trimmed = String(value || '').trim();
       target.innerHTML = '';
       if (!trimmed) return;
+      const normalized = normalizeUrl(trimmed);
       const anchor = document.createElement('a');
       anchor.className = 'print-link-anchor';
-      anchor.href = normalizeUrl(trimmed);
+      anchor.href = normalized;
       anchor.target = '_blank';
       anchor.rel = 'noopener noreferrer';
       anchor.textContent = 'اضغط هنا';
       anchor.title = trimmed;
       target.appendChild(anchor);
+
+      const helper = document.createElement('div');
+      helper.className = 'print-link-url';
+      helper.textContent = trimmed;
+      helper.title = trimmed;
+      target.appendChild(helper);
     }
 
     function syncTextField(id) {
@@ -975,7 +996,11 @@
         const anchor = field.querySelector('.print-link-anchor[href]');
         const styles = window.getComputedStyle(anchor || field);
         if (anchor) {
-          drawTextBlockToCanvas(ctx, slotRect, styles, anchor.textContent || '', scaleX, scaleY, {
+          const helper = field.querySelector('.print-link-url');
+          const linkLabel = [anchor.textContent || '', helper ? helper.textContent || '' : '']
+            .filter(Boolean)
+            .join('\n');
+          drawTextBlockToCanvas(ctx, slotRect, styles, linkLabel, scaleX, scaleY, {
             color: styles.color || '#0f5f8f',
             underline: true
           });
@@ -1145,7 +1170,7 @@
           6 + index,
           '<< /Type /Annot /Subtype /Link /Rect [' +
             [x1, y1, x2, y2].map(formatPdfNumber).join(' ') +
-            '] /Border [0 0 0] /A << /S /URI /URI (' + escapePdfString(link.url) + ') >> >>'
+            '] /Border [0 0 0] /H /I /A << /Type /Action /S /URI /URI (' + escapePdfString(link.url) + ') >> >>'
         );
       });
 
@@ -1207,6 +1232,10 @@
       let previewWindow = null;
       if (isIOS) {
         previewWindow = window.open('', '_blank');
+        if (previewWindow && previewWindow.document) {
+          previewWindow.document.write('<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>جاري تجهيز ملف PDF</title><style>body{font-family:Tahoma,Arial,sans-serif;margin:0;padding:24px;text-align:center;color:#0f172a}.note{color:#475569;font-size:14px;line-height:1.8}</style></head><body><h2>جاري تجهيز ملف PDF</h2><div class="note">سيتم فتح الملف بعد اكتمال الإنشاء مع الحفاظ على الروابط قدر الإمكان على iPhone وiPad.</div></body></html>');
+          previewWindow.document.close();
+        }
       }
       document.title = buildFileName();
       setStatus(fromPrintFallback ? 'جارٍ إنشاء ملف PDF بدلاً من صفحة الطباعة...' : 'جارٍ إنشاء ملف PDF مع الحفاظ على الروابط...');
