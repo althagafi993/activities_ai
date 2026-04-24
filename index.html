@@ -251,19 +251,19 @@
         </div>
 
         <div class="slot medium" style="left:16.1966%; top:32.9532%; width:39.3231%; height:3.3637%;">
-          <textarea id="activityDescription" class="edit-area" data-max-lines="5" data-min-comfort-lines="4" data-target-lines="4" data-target-max-lines="5" data-min-font="8.1" data-min-line-height="8.7" data-shrink-step="0.12" placeholder="وصف النشاط / الفعالية التعليمية"></textarea>
+          <textarea id="activityDescription" class="edit-area" data-max-lines="6" data-min-comfort-lines="4" data-target-lines="4" data-target-max-lines="6" data-min-font="7.2" data-min-line-height="7.7" data-shrink-step="0.18" placeholder="وصف النشاط / الفعالية التعليمية"></textarea>
           <div id="print-activityDescription" class="print-field"></div>
         </div>
         <div class="slot medium" style="left:16.1966%; top:36.3169%; width:39.3231%; height:4.0479%;">
-          <textarea id="reviewedSolution" class="edit-area" data-max-lines="5" data-min-comfort-lines="4" data-target-lines="4" data-target-max-lines="5" data-min-font="8.0" data-min-line-height="8.6" data-shrink-step="0.12" placeholder="الحل المقترح بعد المراجعة"></textarea>
+          <textarea id="reviewedSolution" class="edit-area" data-max-lines="6" data-min-comfort-lines="4" data-target-lines="4" data-target-max-lines="6" data-min-font="7.2" data-min-line-height="7.7" data-shrink-step="0.18" placeholder="الحل المقترح بعد المراجعة"></textarea>
           <div id="print-reviewedSolution" class="print-field"></div>
         </div>
         <div class="slot medium" style="left:16.1966%; top:40.3649%; width:39.3231%; height:4.0479%;">
-          <textarea id="promptText" class="edit-area" data-max-lines="5" data-min-comfort-lines="4" data-target-lines="4" data-target-max-lines="5" data-min-font="8.0" data-min-line-height="8.6" data-shrink-step="0.12" placeholder="الأمر النصي المستخدم في Copilot"></textarea>
+          <textarea id="promptText" class="edit-area" data-max-lines="6" data-min-comfort-lines="4" data-target-lines="4" data-target-max-lines="6" data-min-font="7.2" data-min-line-height="7.7" data-shrink-step="0.18" placeholder="الأمر النصي المستخدم في Copilot"></textarea>
           <div id="print-promptText" class="print-field"></div>
         </div>
         <div class="slot medium" style="left:16.1966%; top:44.4128%; width:39.3231%; height:3.9909%;">
-          <textarea id="promptLink" class="edit-area ltr" data-max-lines="5" data-min-comfort-lines="4" data-target-lines="4" data-target-max-lines="5" data-min-font="8.0" data-min-line-height="8.6" data-shrink-step="0.12" placeholder="https://..."></textarea>
+          <textarea id="promptLink" class="edit-area ltr" data-max-lines="6" data-min-comfort-lines="4" data-target-lines="4" data-target-max-lines="6" data-min-font="7.2" data-min-line-height="7.7" data-shrink-step="0.18" placeholder="https://..."></textarea>
           <div id="print-promptLink" class="print-field ltr"></div>
         </div>
 
@@ -274,7 +274,7 @@
           <img id="screenshotImage" class="screenshot-image" alt="الصورة المرفقة" />
           <div id="screenshotPlaceholder" class="screenshot-placeholder">اضغط هنا لإرفاق صورة<br>أو الصق لقطة الشاشة مباشرة</div>
         </div>
-        <div class="screenshot-slot print-only" aria-hidden="true">
+        <div id="printScreenshotSlot" class="screenshot-slot print-only" aria-hidden="true">
           <img id="printScreenshotImage" class="screenshot-image" alt="الصورة المرفقة للطباعة" />
         </div>
         <input id="imageInput" type="file" accept="image/*" aria-hidden="true" tabindex="-1" style="position:absolute;left:-9999px;width:1px;height:1px;opacity:0;pointer-events:none;" />
@@ -746,16 +746,49 @@
       });
     }
 
-    function handleImage(file) {
+    function readFileAsDataUrl(file) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = () => reject(new Error('تعذر قراءة الصورة.'));
+        reader.readAsDataURL(file);
+      });
+    }
+
+    async function normalizeImageDataUrl(dataUrl) {
+      try {
+        const img = await loadImageFromUrl(dataUrl);
+        const maxSide = 2200;
+        const ratio = Math.min(1, maxSide / Math.max(img.naturalWidth || img.width, img.naturalHeight || img.height));
+        const width = Math.max(1, Math.round((img.naturalWidth || img.width) * ratio));
+        const height = Math.max(1, Math.round((img.naturalHeight || img.height) * ratio));
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, width, height);
+        ctx.drawImage(img, 0, 0, width, height);
+        return canvas.toDataURL('image/jpeg', 0.92);
+      } catch (error) {
+        console.warn('Image normalization fallback', error);
+        return dataUrl;
+      }
+    }
+
+    async function handleImage(file) {
       if (!file) return;
-      const reader = new FileReader();
-      reader.onload = () => {
-        state.imageData = reader.result;
+      try {
+        setStatus('جاري تجهيز الصورة للإدراج والطباعة...');
+        const rawDataUrl = await readFileAsDataUrl(file);
+        state.imageData = await normalizeImageDataUrl(rawDataUrl);
         state.imageName = file.name;
         updateImageViews();
         saveState(true);
-      };
-      reader.readAsDataURL(file);
+      } catch (error) {
+        console.error(error);
+        setStatus('تعذر إدراج الصورة، يرجى اختيار صورة بصيغة PNG أو JPG.');
+      }
     }
 
     function openImagePicker() {
@@ -934,15 +967,30 @@
       const settings = options || {};
       const fontFamily = styles.fontFamily || 'Tahoma, Arial, sans-serif';
       const fontWeight = styles.fontWeight || '400';
-      const fontSize = Math.max(8, parsePxValue(styles.fontSize, 14) * scaleY);
-      const lineHeight = Math.max(fontSize * 1.15, parsePxValue(styles.lineHeight, fontSize * 1.2) * scaleY);
+      const sourceElement = settings.sourceElement || null;
+      const isMultilineSource = !!(sourceElement && sourceElement.classList && sourceElement.classList.contains('edit-area'));
       const paddingTop = parsePxValue(styles.paddingTop, 0) * scaleY;
       const paddingRight = parsePxValue(styles.paddingRight, 0) * scaleX;
       const paddingBottom = parsePxValue(styles.paddingBottom, 0) * scaleY;
       const paddingLeft = parsePxValue(styles.paddingLeft, 0) * scaleX;
       const availableWidth = Math.max(10, rect.w - paddingLeft - paddingRight);
-      const availableHeight = Math.max(lineHeight, rect.h - paddingTop - paddingBottom);
-      const maxLines = Math.max(1, Math.floor(availableHeight / lineHeight));
+      const availableHeight = Math.max(8, rect.h - paddingTop - paddingBottom);
+      let fontSize = Math.max(8, parsePxValue(styles.fontSize, 14) * scaleY);
+      let lineHeight = Math.max(fontSize * 1.15, parsePxValue(styles.lineHeight, fontSize * 1.2) * scaleY);
+      if (isMultilineSource) {
+        const desiredLines = Math.max(4, parseInt(sourceElement.dataset.targetLines || sourceElement.dataset.minComfortLines || '4', 10));
+        const maxAllowedLines = Math.max(desiredLines, parseInt(sourceElement.dataset.maxLines || '6', 10));
+        const lineForDesired = Math.max(8, availableHeight / desiredLines);
+        const minCanvasFont = Math.max(7, parseFloat(sourceElement.dataset.minCanvasFont || '9'));
+        fontSize = Math.max(minCanvasFont, Math.min(fontSize, lineForDesired * 0.78));
+        lineHeight = Math.max(fontSize * 1.12, Math.min(lineHeight, lineForDesired * 0.98));
+        if (Math.floor(availableHeight / lineHeight) < desiredLines) {
+          lineHeight = availableHeight / desiredLines;
+          fontSize = Math.min(fontSize, lineHeight * 0.82);
+        }
+        settings.maxLinesOverride = Math.max(desiredLines, Math.min(maxAllowedLines, Math.floor(availableHeight / lineHeight)));
+      }
+      const maxLines = settings.maxLinesOverride || Math.max(1, Math.floor(availableHeight / lineHeight));
       ctx.save();
       ctx.font = `${fontWeight} ${fontSize}px ${fontFamily}`;
       ctx.fillStyle = settings.color || styles.color || '#111827';
@@ -1023,10 +1071,13 @@
         if (anchor) {
           drawTextBlockToCanvas(ctx, slotRect, styles, anchor.textContent || '', scaleX, scaleY, {
             color: styles.color || '#0f5f8f',
-            underline: true
+            underline: true,
+            sourceElement: byId((field.id || '').replace(/^print-/, ''))
           });
         } else {
-          drawTextBlockToCanvas(ctx, slotRect, window.getComputedStyle(field), field.textContent || '', scaleX, scaleY);
+          drawTextBlockToCanvas(ctx, slotRect, window.getComputedStyle(field), field.textContent || '', scaleX, scaleY, {
+            sourceElement: byId((field.id || '').replace(/^print-/, ''))
+          });
         }
       });
 
@@ -1046,9 +1097,21 @@
       const screenshotImg = byId('printScreenshotImage');
       if (screenshotImg && screenshotImg.src) {
         await waitForLoadedImage(screenshotImg);
-        const slot = byId('screenshotSlot') || screenshotImg.closest('.screenshot-slot');
+        const visiblePrintSlot = byId('printScreenshotSlot');
+        const screenSlot = byId('screenshotSlot');
+        const slot = (visiblePrintSlot && visiblePrintSlot.getBoundingClientRect().width > 0)
+          ? visiblePrintSlot
+          : (screenSlot || screenshotImg.closest('.screenshot-slot'));
         if (slot) {
-          const rect = getRelativeRect(slot, paperRect, scaleX, scaleY);
+          let rect = getRelativeRect(slot, paperRect, scaleX, scaleY);
+          if (!rect.w || !rect.h) {
+            rect = {
+              x: pageWidth * 0.161966,
+              y: pageHeight * 0.504561,
+              w: pageWidth * 0.684932,
+              h: pageHeight * 0.348917
+            };
+          }
           const sourceWidth = screenshotImg.naturalWidth || screenshotImg.width;
           const sourceHeight = screenshotImg.naturalHeight || screenshotImg.height;
           if (rect.w > 0 && rect.h > 0 && sourceWidth > 0 && sourceHeight > 0) {
